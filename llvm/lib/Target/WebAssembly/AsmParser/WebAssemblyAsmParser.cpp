@@ -214,6 +214,11 @@ public:
                      SMLoc & /*EndLoc*/) override {
     llvm_unreachable("ParseRegister is not implemented.");
   }
+  OperandMatchResultTy tryParseRegister(unsigned & /*RegNo*/,
+                                        SMLoc & /*StartLoc*/,
+                                        SMLoc & /*EndLoc*/) override {
+    llvm_unreachable("tryParseRegister is not implemented.");
+  }
 
   bool error(const Twine &Msg, const AsmToken &Tok) {
     return Parser.Error(Tok.getLoc(), Msg + Tok.getString());
@@ -879,6 +884,9 @@ public:
     auto SecName = ".text." + SymName;
     auto WS = getContext().getWasmSection(SecName, SectionKind::getText());
     getStreamer().SwitchSection(WS);
+    // Also generate DWARF for this section if requested.
+    if (getContext().getGenDwarfForAssembly())
+      getContext().addGenDwarfSection(WS);
   }
 
   void onEndOfFunction() {
@@ -899,7 +907,7 @@ public:
 } // end anonymous namespace
 
 // Force static initialization.
-extern "C" void LLVMInitializeWebAssemblyAsmParser() {
+extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeWebAssemblyAsmParser() {
   RegisterMCAsmParser<WebAssemblyAsmParser> X(getTheWebAssemblyTarget32());
   RegisterMCAsmParser<WebAssemblyAsmParser> Y(getTheWebAssemblyTarget64());
 }

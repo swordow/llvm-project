@@ -25,7 +25,7 @@ target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 %struct.ST = type { i32, double, %struct.RT }
 
 ; ATTRIBUTOR: Function Attrs: nofree nosync nounwind optsize readnone ssp uwtable
-; ATTRIBUTOR-NEXT: define nonnull i32* @foo(%struct.ST* nofree nonnull readnone "no-capture-maybe-returned" %s)
+; ATTRIBUTOR-NEXT: define nonnull i32* @foo(%struct.ST* nofree readnone "no-capture-maybe-returned" %s)
 define i32* @foo(%struct.ST* %s) nounwind uwtable readnone optsize ssp {
 entry:
   %arrayidx = getelementptr inbounds %struct.ST, %struct.ST* %s, i64 1, i32 2, i32 1, i64 5, i64 13
@@ -311,9 +311,16 @@ declare float @llvm.cos(float %val) readnone
 
 ; TEST 19 - positive, readnone & non-convergent intrinsic.
 
-; ATTRIBUTOR: Function Attrs: nosync nounwind
+; ATTRIBUTOR: Function Attrs: nofree nosync nounwind readnone willreturn
 ; ATTRIBUTOR-NEXT: define i32 @cos_test(float %x)
 define i32 @cos_test(float %x) {
   call float @llvm.cos(float %x)
   ret i32 4
+}
+
+; ATTRIBUTOR: Function Attrs: nosync nounwind
+; ATTRIBUTOR-NEXT: define float @cos_test2(float %x)
+define float @cos_test2(float %x) {
+  %c = call float @llvm.cos(float %x)
+  ret float %c
 }

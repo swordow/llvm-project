@@ -116,6 +116,10 @@ const OMPClauseWithPreInit *OMPClauseWithPreInit::get(const OMPClause *C) {
   case OMPC_update:
   case OMPC_capture:
   case OMPC_seq_cst:
+  case OMPC_acq_rel:
+  case OMPC_acquire:
+  case OMPC_release:
+  case OMPC_relaxed:
   case OMPC_depend:
   case OMPC_threads:
   case OMPC_simd:
@@ -137,6 +141,7 @@ const OMPClauseWithPreInit *OMPClauseWithPreInit::get(const OMPClause *C) {
   case OMPC_device_type:
   case OMPC_match:
   case OMPC_nontemporal:
+  case OMPC_order:
     break;
   }
 
@@ -189,6 +194,10 @@ const OMPClauseWithPostUpdate *OMPClauseWithPostUpdate::get(const OMPClause *C) 
   case OMPC_update:
   case OMPC_capture:
   case OMPC_seq_cst:
+  case OMPC_acq_rel:
+  case OMPC_acquire:
+  case OMPC_release:
+  case OMPC_relaxed:
   case OMPC_depend:
   case OMPC_device:
   case OMPC_threads:
@@ -216,6 +225,7 @@ const OMPClauseWithPostUpdate *OMPClauseWithPostUpdate::get(const OMPClause *C) 
   case OMPC_device_type:
   case OMPC_match:
   case OMPC_nontemporal:
+  case OMPC_order:
     break;
   }
 
@@ -1240,7 +1250,8 @@ void OMPClausePrinter::VisitOMPDefaultClause(OMPDefaultClause *Node) {
 
 void OMPClausePrinter::VisitOMPProcBindClause(OMPProcBindClause *Node) {
   OS << "proc_bind("
-     << getOpenMPSimpleClauseTypeName(OMPC_proc_bind, Node->getProcBindKind())
+     << getOpenMPSimpleClauseTypeName(OMPC_proc_bind,
+                                      unsigned(Node->getProcBindKind()))
      << ")";
 }
 
@@ -1329,6 +1340,22 @@ void OMPClausePrinter::VisitOMPCaptureClause(OMPCaptureClause *) {
 
 void OMPClausePrinter::VisitOMPSeqCstClause(OMPSeqCstClause *) {
   OS << "seq_cst";
+}
+
+void OMPClausePrinter::VisitOMPAcqRelClause(OMPAcqRelClause *) {
+  OS << "acq_rel";
+}
+
+void OMPClausePrinter::VisitOMPAcquireClause(OMPAcquireClause *) {
+  OS << "acquire";
+}
+
+void OMPClausePrinter::VisitOMPReleaseClause(OMPReleaseClause *) {
+  OS << "release";
+}
+
+void OMPClausePrinter::VisitOMPRelaxedClause(OMPRelaxedClause *) {
+  OS << "relaxed";
 }
 
 void OMPClausePrinter::VisitOMPThreadsClause(OMPThreadsClause *) {
@@ -1689,4 +1716,9 @@ void OMPClausePrinter::VisitOMPNontemporalClause(OMPNontemporalClause *Node) {
     VisitOMPClauseList(Node, '(');
     OS << ")";
   }
+}
+
+void OMPClausePrinter::VisitOMPOrderClause(OMPOrderClause *Node) {
+  OS << "order(" << getOpenMPSimpleClauseTypeName(OMPC_order, Node->getKind())
+     << ")";
 }

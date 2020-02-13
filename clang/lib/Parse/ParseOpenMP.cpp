@@ -343,9 +343,8 @@ Parser::ParseOpenMPDeclareReductionDirective(AccessSpecifier AS) {
                                     Scope::OpenMPDirectiveScope);
     // Parse <combiner> expression.
     Actions.ActOnOpenMPDeclareReductionCombinerStart(getCurScope(), D);
-    ExprResult CombinerResult =
-        Actions.ActOnFinishFullExpr(ParseAssignmentExpression().get(),
-                                    D->getLocation(), /*DiscardedValue*/ false);
+    ExprResult CombinerResult = Actions.ActOnFinishFullExpr(
+        ParseExpression().get(), D->getLocation(), /*DiscardedValue*/ false);
     Actions.ActOnOpenMPDeclareReductionCombinerEnd(D, CombinerResult.get());
 
     if (CombinerResult.isInvalid() && Tok.isNot(tok::r_paren) &&
@@ -430,7 +429,7 @@ void Parser::ParseOpenMPReductionInitializerForDecl(VarDecl *OmpPrivParm) {
     }
 
     PreferredType.enterVariableInit(Tok.getLocation(), OmpPrivParm);
-    ExprResult Init = ParseAssignmentExpression();
+    ExprResult Init = ParseInitializer();
 
     if (Init.isInvalid()) {
       SkipUntil(tok::r_paren, tok::annot_pragma_openmp_end, StopBeforeMatch);
@@ -1336,14 +1335,45 @@ void Parser::ParseOMPEndDeclareTargetDirective(OpenMPDirectiveKind DKind,
 ///         annot_pragma_openmp_end
 ///
 Parser::DeclGroupPtrTy Parser::ParseOpenMPDeclarativeDirectiveWithExtDecl(
-    AccessSpecifier &AS, ParsedAttributesWithRange &Attrs,
+    AccessSpecifier &AS, ParsedAttributesWithRange &Attrs, bool Delayed,
     DeclSpec::TST TagType, Decl *Tag) {
   assert(Tok.is(tok::annot_pragma_openmp) && "Not an OpenMP directive!");
   ParsingOpenMPDirectiveRAII DirScope(*this);
   ParenBraceBracketBalancer BalancerRAIIObj(*this);
 
-  SourceLocation Loc = ConsumeAnnotationToken();
-  OpenMPDirectiveKind DKind = parseOpenMPDirectiveKind(*this);
+  SourceLocation Loc;
+  OpenMPDirectiveKind DKind;
+  if (Delayed) {
+    TentativeParsingAction TPA(*this);
+    Loc = ConsumeAnnotationToken();
+    DKind = parseOpenMPDirectiveKind(*this);
+    if (DKind == OMPD_declare_reduction || DKind == OMPD_declare_mapper) {
+      // Need to delay parsing until completion of the parent class.
+      TPA.Revert();
+      CachedTokens Toks;
+      unsigned Cnt = 1;
+      Toks.push_back(Tok);
+      while (Cnt && Tok.isNot(tok::eof)) {
+        (void)ConsumeAnyToken();
+        if (Tok.is(tok::annot_pragma_openmp))
+          ++Cnt;
+        else if (Tok.is(tok::annot_pragma_openmp_end))
+          --Cnt;
+        Toks.push_back(Tok);
+      }
+      // Skip last annot_pragma_openmp_end.
+      if (Cnt == 0)
+        (void)ConsumeAnyToken();
+      auto *LP = new LateParsedPragma(this, AS);
+      LP->takeToks(Toks);
+      getCurrentClass().LateParsedDeclarations.push_back(LP);
+      return nullptr;
+    }
+    TPA.Commit();
+  } else {
+    Loc = ConsumeAnnotationToken();
+    DKind = parseOpenMPDirectiveKind(*this);
+  }
 
   switch (DKind) {
   case OMPD_threadprivate: {
@@ -1443,7 +1473,7 @@ Parser::DeclGroupPtrTy Parser::ParseOpenMPDeclarativeDirectiveWithExtDecl(
       Actions.EndOpenMPClause();
     }
     // Consume final annot_pragma_openmp_end
-    if (Clauses.size() == 0) {
+    if (Clauses.empty()) {
       Diag(Tok, diag::err_omp_expected_clause)
           << getOpenMPDirectiveName(OMPD_requires);
       ConsumeAnnotationToken();
@@ -1495,7 +1525,8 @@ Parser::DeclGroupPtrTy Parser::ParseOpenMPDeclarativeDirectiveWithExtDecl(
 
     DeclGroupPtrTy Ptr;
     if (Tok.is(tok::annot_pragma_openmp)) {
-      Ptr = ParseOpenMPDeclarativeDirectiveWithExtDecl(AS, Attrs, TagType, Tag);
+      Ptr = ParseOpenMPDeclarativeDirectiveWithExtDecl(AS, Attrs, Delayed,
+                                                       TagType, Tag);
     } else if (Tok.isNot(tok::r_brace) && !isEofOrEom()) {
       // Here we expect to see some function declaration.
       if (AS == AS_none) {
@@ -1689,7 +1720,6 @@ Parser::ParseOpenMPDeclarativeOrExecutableDirective(ParsedStmtContext StmtCtx) {
   DeclarationNameInfo DirName;
   StmtResult Directive = StmtError();
   bool HasAssociatedStatement = true;
-  bool FlushHasClause = false;
 
   switch (DKind) {
   case OMPD_threadprivate: {
@@ -1800,13 +1830,6 @@ Parser::ParseOpenMPDeclarativeOrExecutableDirective(ParsedStmtContext StmtCtx) {
     break;
   }
   case OMPD_flush:
-    if (PP.LookAhead(0).is(tok::l_paren)) {
-      FlushHasClause = true;
-      // Push copy of the current token back to stream to properly parse
-      // pseudo-clause OMPFlushClause.
-      PP.EnterToken(Tok, /*IsReinject*/ true);
-    }
-    LLVM_FALLTHROUGH;
   case OMPD_taskyield:
   case OMPD_barrier:
   case OMPD_taskwait:
@@ -1866,6 +1889,10 @@ Parser::ParseOpenMPDeclarativeOrExecutableDirective(ParsedStmtContext StmtCtx) {
   case OMPD_target_teams_distribute_parallel_for:
   case OMPD_target_teams_distribute_parallel_for_simd:
   case OMPD_target_teams_distribute_simd: {
+    // Special processing for flush clause.
+    Token FlushTok;
+    if (DKind == OMPD_flush)
+      FlushTok = Tok;
     ConsumeToken();
     // Parse directive name of the 'critical' directive if any.
     if (DKind == OMPD_critical) {
@@ -1895,6 +1922,15 @@ Parser::ParseOpenMPDeclarativeOrExecutableDirective(ParsedStmtContext StmtCtx) {
     Actions.StartOpenMPDSABlock(DKind, DirName, Actions.getCurScope(), Loc);
 
     while (Tok.isNot(tok::annot_pragma_openmp_end)) {
+      bool FlushHasClause = false;
+      if (DKind == OMPD_flush && Tok.is(tok::l_paren)) {
+        FlushHasClause = true;
+        // Push copy of the current token back to stream to properly parse
+        // pseudo-clause OMPFlushClause.
+        PP.EnterToken(Tok, /*IsReinject*/ true);
+        PP.EnterToken(FlushTok, /*IsReinject*/ true);
+        ConsumeAnyToken();
+      }
       OpenMPClauseKind CKind =
           Tok.isAnnotation()
               ? OMPC_unknown
@@ -2053,7 +2089,8 @@ bool Parser::ParseOpenMPSimpleVarList(
 ///       thread_limit-clause | priority-clause | grainsize-clause |
 ///       nogroup-clause | num_tasks-clause | hint-clause | to-clause |
 ///       from-clause | is_device_ptr-clause | task_reduction-clause |
-///       in_reduction-clause | allocator-clause | allocate-clause
+///       in_reduction-clause | allocator-clause | allocate-clause |
+///       acq_rel-clause | acquire-clause | release-clause | relaxed-clause
 ///
 OMPClause *Parser::ParseOpenMPClause(OpenMPDirectiveKind DKind,
                                      OpenMPClauseKind CKind, bool FirstClause) {
@@ -2120,6 +2157,7 @@ OMPClause *Parser::ParseOpenMPClause(OpenMPDirectiveKind DKind,
   case OMPC_default:
   case OMPC_proc_bind:
   case OMPC_atomic_default_mem_order:
+  case OMPC_order:
     // OpenMP [2.14.3.1, Restrictions]
     //  Only a single default clause may be specified on a parallel, task or
     //  teams directive.
@@ -2128,7 +2166,7 @@ OMPClause *Parser::ParseOpenMPClause(OpenMPDirectiveKind DKind,
     // OpenMP [5.0, Requires directive, Restrictions]
     //  At most one atomic_default_mem_order clause can appear
     //  on the directive
-    if (!FirstClause) {
+    if (!FirstClause && CKind != OMPC_order) {
       Diag(Tok, diag::err_omp_more_one_clause)
           << getOpenMPDirectiveName(DKind) << getOpenMPClauseName(CKind) << 0;
       ErrorFound = true;
@@ -2161,6 +2199,10 @@ OMPClause *Parser::ParseOpenMPClause(OpenMPDirectiveKind DKind,
   case OMPC_update:
   case OMPC_capture:
   case OMPC_seq_cst:
+  case OMPC_acq_rel:
+  case OMPC_acquire:
+  case OMPC_release:
+  case OMPC_relaxed:
   case OMPC_threads:
   case OMPC_simd:
   case OMPC_nogroup:
@@ -2233,8 +2275,8 @@ ExprResult Parser::ParseOpenMPParensExpr(StringRef ClauseName,
     return ExprError();
 
   SourceLocation ELoc = Tok.getLocation();
-  ExprResult LHS(ParseCastExpression(
-      /*isUnaryExpression=*/false, IsAddressOfOperand, NotTypeCast));
+  ExprResult LHS(ParseCastExpression(AnyCastExpr, IsAddressOfOperand,
+                                     NotTypeCast));
   ExprResult Val(ParseRHSOfBinaryExpression(LHS, prec::Conditional));
   Val = Actions.ActOnFinishFullExpr(Val.get(), ELoc, /*DiscardedValue*/ false);
 
@@ -2482,7 +2524,7 @@ OMPClause *Parser::ParseOpenMPSingleExprWithArgClause(OpenMPClauseKind Kind,
                           Kind == OMPC_if;
   if (NeedAnExpression) {
     SourceLocation ELoc = Tok.getLocation();
-    ExprResult LHS(ParseCastExpression(false, false, NotTypeCast));
+    ExprResult LHS(ParseCastExpression(AnyCastExpr, false, NotTypeCast));
     Val = ParseRHSOfBinaryExpression(LHS, prec::Conditional);
     Val =
         Actions.ActOnFinishFullExpr(Val.get(), ELoc, /*DiscardedValue*/ false);

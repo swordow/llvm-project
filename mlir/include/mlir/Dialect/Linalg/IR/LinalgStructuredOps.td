@@ -1,6 +1,6 @@
 //===- LinalgStructuredOps.td - Linalg dialect library ops -*- tablegen -*-===//
 //
-// Part of the MLIR Project, under the Apache License v2.0 with LLVM Exceptions.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
@@ -29,84 +29,155 @@ class NInputs<int args_in> :
 class NOutputs<int args_out> :
   NativeOpTrait<"linalg::NOutputs<" # !cast<string>(args_out) # ">::Impl"> {}
 
-def ViewTraits : NativeOpTrait<"linalg::ViewTraits">;
+def StructuredOpTraits : NativeOpTrait<"linalg::StructuredOpTraits">;
 
 // The linalg 'LinalgStructuredInterface' provides access to the 'LinalgOp'
 // interface.
 def LinalgStructuredInterface : OpInterface<"LinalgOp"> {
   let methods = [
+    //========================================================================//
+    // Loop types handling.
+    //========================================================================//
     InterfaceMethod<
-      "Query the number of inputs from the current operation.",
-      "unsigned", "getNumInputs"
-    >,
-    InterfaceMethod<
-      "Query the number of outputs from the current operation.",
-      "unsigned", "getNumOutputs"
-    >,
-    InterfaceMethod<
-      "Query the number of inputs and outputs from the current operation.",
-      "unsigned", "getNumInputsAndOutputs"
-    >,
-    InterfaceMethod<
-      "Query the input operands from the current operation.",
-      "Operation::operand_range", "getInputs"
-    >,
-    InterfaceMethod<
-      "Query the output operands from the current operation.",
-      "Operation::operand_range", "getOutputs"
-    >,
-    InterfaceMethod<
-      "Query the input and output operands from the current operation.",
-      "Operation::operand_range", "getInputsAndOutputs"
-    >,
-    InterfaceMethod<
-      "Query the iterator types attribute within the current operation.",
-      "ArrayAttr", "iterator_types"
-    >,
-    InterfaceMethod<
-      "Query the indexing maps attribute within the current operation.",
-      "ArrayAttr", "indexing_maps"
-    >,
-    InterfaceMethod<
-      "Query the number of parallel loops within the current operation.",
+      "Return the number of parallel loops within the current operation.",
       "unsigned", "getNumParallelLoops"
     >,
     InterfaceMethod<
-      "Query the number of reduction loops within the current operation.",
+      "Return the number of reduction loops within the current operation.",
       "unsigned", "getNumReductionLoops"
     >,
     InterfaceMethod<
-      "Query the number of window loops within the current operation.",
+      "Return the number of window loops within the current operation.",
       "unsigned", "getNumWindowLoops"
     >,
     InterfaceMethod<
-      "Query the number of loops within the current operation.",
+      "Return the number of loops within the current operation.",
       "unsigned", "getNumLoops">,
-    InterfaceMethod<"Query the input view at the given index.",
+
+    InterfaceMethod<
+      [{Returns true if the current operation has only one loop and it's a
+        reduction loop}],
+      "unsigned", "hasSingleReductionLoop">,
+
+    //========================================================================//
+    // Input arguments handling.
+    //========================================================================//
+    InterfaceMethod<
+      "Return the number of inputs from the current operation.",
+      "unsigned", "getNumInputs"
+    >,
+    InterfaceMethod<"Return the input view at the given index.",
       "Value ", "getInput", (ins "unsigned":$i)
     >,
-    InterfaceMethod<"Query the output view at the given index.",
-      "Value ", "getOutput", (ins "unsigned":$i)
-    >,
     InterfaceMethod<[{
-        Query the index of the given input value, or `None` if the value is not
-        an input.
+        Return the index of the given input value `v`, or `None` if the value is
+        not an input.
       }],
-      "llvm::Optional<unsigned>", "getIndexOfInput", (ins "Value ":$view)
+      "llvm::Optional<unsigned>", "getIndexOfInput", (ins "Value ":$v)
+    >,
+    InterfaceMethod<
+      "Return the input operands from the current operation.",
+      "Operation::operand_range", "getInputs"
     >,
     InterfaceMethod<[{
-        Query the index of the given view value, or `None` if the value is not
-        an view.
-      }],
-      "llvm::Optional<unsigned>", "getIndexOfOutput", (ins "Value ":$view)
-    >,
+        Return the type of the input shape at the given index.
+      }], "ShapedType", "getInputShapedType", (ins "unsigned":$i)>,
     InterfaceMethod<[{
-        Query the type of the input view at the given index.
-      }], "MemRefType", "getInputViewType", (ins "unsigned":$i)>,
-    InterfaceMethod<[{
-        Query the type of the output view at the given index.
-      }], "MemRefType", "getOutputViewType", (ins "unsigned":$i)>,
+        Return the subset of input operands that are of ranked tensor type.
+      }], "SmallVector<RankedTensorType, 4>", "getInputTensorTypes">,
 
+    //========================================================================//
+    // Output arguments handling.
+    //========================================================================//
+    InterfaceMethod<
+      "Return the number of outputs from the current operation.",
+      "unsigned", "getNumOutputs"
+    >,
+    InterfaceMethod<"Return the output buffer at the given index.",
+      "Value ", "getOutputBuffer", (ins "unsigned":$i)
+    >,
+    InterfaceMethod<[{
+        Return the index of the given buffer value, or `None` if the value is
+        not part of the output buffers.
+      }],
+      "llvm::Optional<unsigned>", "getIndexOfOutputBuffer", (ins "Value ":$view)
+    >,
+    InterfaceMethod<[{
+        Return the type of the output buffer at the given index.
+      }], "MemRefType", "getOutputBufferType", (ins "unsigned":$i)>,
+    InterfaceMethod<[{
+        Return the results that are of ranked tensor type.
+      }], "SmallVector<RankedTensorType, 4>", "getOutputTensorTypes">,
+    InterfaceMethod<
+      "Return the output buffers (operands) from the current operation.",
+      "Operation::operand_range", "getOutputBuffers"
+    >,
+
+    //========================================================================//
+    // Input and Output arguments handling.
+    //========================================================================//
+    InterfaceMethod<
+      "Return the number of inputs and outputs, irrespective of their buffer "
+      "or tensor type.",
+      "unsigned", "getNumInputsAndOutputs"
+    >,
+    InterfaceMethod<
+      "Return the number of inputs, irrespective of their buffer or tensor "
+      "type, and output buffers",
+      "unsigned", "getNumInputsAndOutputBuffers"
+    >,
+    InterfaceMethod<
+      "Return the range over inputs (irrespective of type) and output buffers.",
+      "Operation::operand_range", "getInputsAndOutputBuffers"
+    >,
+
+    //========================================================================//
+    // Other interface methods.
+    //========================================================================//
+    InterfaceMethod<
+      "Return the reference iterators for this named op (if any are specied). "
+      "These reference iterators are used to specify the default behavior of "
+      "the op. Typically this would be a static method but in order to allow "
+      "rank-polymorphic ops, this needs to be per object instance. Named ops "
+      "must define referenceIterators, even if empty for the 0-D case. "
+      "Generic ops on the other hand have a None `referenceIterators`",
+      "llvm::Optional<SmallVector<StringRef, 8>>", "referenceIterators"
+    >,
+    InterfaceMethod<
+      "Return the reference indexing maps for this named op (if any are "
+      "specified). Typically this would be a static method but in order to "
+      "allow rank-polymorphic ops, this needs to be per object instance. Named "
+      "ops must define referenceIterators, even if empty for the 0-D case. "
+      "Generic ops on the other hand have a None `referenceIndexingMaps`",
+      "llvm::Optional<SmallVector<AffineMap, 8>>", "referenceIndexingMaps"
+    >,
+    InterfaceMethod<
+      "Return the iterator types attribute within the current operation.",
+      "ArrayAttr", "iterator_types"
+    >,
+    InterfaceMethod<
+      "Return the indexing maps attribute within the current operation.",
+      "ArrayAttr", "indexing_maps"
+    >,
+    InterfaceMethod<"Return the input or output indexing map at index `i`.",
+      "AffineMap", "getIndexingMap", (ins "unsigned":$i)
+    >,
+    InterfaceMethod<"Return the input indexing map at index `i`.",
+      "AffineMap", "getInputIndexingMap", (ins "unsigned":$i)
+    >,
+    InterfaceMethod<"Return the output indexing map at index `i`.",
+      "AffineMap", "getOutputIndexingMap", (ins "unsigned":$i)
+    >,
+    InterfaceMethod<[{
+        Return whether the op has only MemRef input and outputs.
+      }], "bool", "hasBufferSemantics">,
+    InterfaceMethod<[{
+        Return whether the op has only RankedTensor input and outputs.
+      }], "bool", "hasTensorSemantics">,
+
+    //========================================================================//
+    // Other static interface methods.
+    //========================================================================//
     StaticInterfaceMethod<[{
         Create an operation of the current type with the given location,
         operands, and attributes.
@@ -119,9 +190,6 @@ def LinalgStructuredInterface : OpInterface<"LinalgOp"> {
                                           attributes);
       }]
     >,
-
-    /// Clone an operation with the given location and operands. This is used to
-    /// abstract away the optional underlying region creation.
     InterfaceMethod<[{
         Clone the current operation with the given location and operands. This
         is used to abstract away the optional underlying region creation.
@@ -147,9 +215,7 @@ def LinalgStructuredInterface : OpInterface<"LinalgOp"> {
 // depending on the specific Linalg op.
 class LinalgStructuredBase_Op<string mnemonic, list<OpTrait> props>
   : Op<Linalg_Dialect, mnemonic,
-       !listconcat(props, [ViewTraits, LinalgStructuredInterface])> {
-  let parser = [{ return parseLinalgStructuredOp(parser, result); }];
-  let printer = [{ printLinalgStructuredOp(p, *this); }];
+       !listconcat(props, [StructuredOpTraits, LinalgStructuredInterface])> {
 }
 
 class LinalgStructured_Op<string mnemonic, list<OpTrait> props>
@@ -159,10 +225,11 @@ class LinalgStructured_Op<string mnemonic, list<OpTrait> props>
       return generateLibraryCallName(getOperation());
     }
   }];
+  let assemblyFormat = "`(` operands `)` attr-dict `:` type(operands)";
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Concrete Linalg ops.
+// Named Linalg ops, implemented as special configurations of a generic op.
 ////////////////////////////////////////////////////////////////////////////////
 def CopyOp : LinalgStructured_Op<"copy", [NInputs<1>, NOutputs<1>]> {
   let description = [{
@@ -224,34 +291,48 @@ def CopyOp : LinalgStructured_Op<"copy", [NInputs<1>, NOutputs<1>]> {
       builder, result, input, output, AffineMapAttr(), AffineMapAttr());
   }]>];
   let extraClassDeclaration = libraryCallName # [{
+    // Defined in C++ for now.
+    // TODO(ntv): auto-generate.
     ArrayAttr indexing_maps();
 
-    ArrayAttr iterator_types() {
-      unsigned nPar = input()->getType().cast<ShapedType>().getRank();
-      MLIRContext *ctx = getContext();
-      SmallVector<Attribute, 8> iters(
-        nPar, StringAttr::get(getParallelIteratorTypeName(), ctx));
-      return ArrayAttr::get(iters, ctx);
+    // Rank-polymorphic.
+    //   filling_value -> O(ivs) with parallel iterators.
+    llvm::Optional<SmallVector<StringRef, 8>> referenceIterators() {
+      unsigned nPar = input().getType().cast<ShapedType>().getRank();
+      return SmallVector<StringRef, 8>(nPar, getParallelIteratorTypeName());
+    }
+
+    llvm::Optional<SmallVector<AffineMap, 8>> referenceIndexingMaps() {
+      llvm_unreachable("NYI referenceIndexingMaps for CopyOp");
     }
   }];
   let verifier = [{ return ::verify(*this); }];
+
+  let hasFolder = 1;
 }
 
 def FillOp : LinalgStructured_Op<"fill", [NInputs<0>, NOutputs<1>]> {
-  let arguments = (ins AnyStridedMemRef:$input,
+  let arguments = (ins AnyStridedMemRef:$output,
                    AnyTypeOf<[AnyFloat, AnyInteger, AnyVector]>:$value);
   let extraClassDeclaration = libraryCallName # [{
+    // Defined in C++ for now.
+    // TODO(ntv): auto-generate.
     ArrayAttr indexing_maps();
 
-    ArrayAttr iterator_types() {
-      unsigned nPar = input()->getType().cast<ShapedType>().getRank();
-      MLIRContext *ctx = getContext();
-      SmallVector<Attribute, 8> iters(
-        nPar, StringAttr::get(getParallelIteratorTypeName(), ctx));
-      return ArrayAttr::get(iters, ctx);
+    // Rank-polymorphic.
+    //   filling_value -> O(ivs) with parallel iterators.
+    llvm::Optional<SmallVector<StringRef, 8>> referenceIterators() {
+      unsigned nPar = output().getType().cast<ShapedType>().getRank();
+      return SmallVector<StringRef, 8>(nPar, getParallelIteratorTypeName());
+    }
+
+    llvm::Optional<SmallVector<AffineMap, 8>> referenceIndexingMaps() {
+      llvm_unreachable("NYI referenceIndexingMaps for CopyOp");
     }
   }];
   let verifier = [{ return ::verify(*this); }];
+  
+  let hasFolder = 1;
 }
 
 def DotOp : LinalgStructured_Op<"dot", [NInputs<2>, NOutputs<1>]> {
@@ -259,14 +340,20 @@ def DotOp : LinalgStructured_Op<"dot", [NInputs<2>, NOutputs<1>]> {
                        AnyStridedMemRefOfRank<1>,
                        AnyStridedMemRefOfRank<0>);
   let extraClassDeclaration = libraryCallName # [{
+    // Defined in C++ for now.
+    // TODO(ntv): auto-generate.
     ArrayAttr indexing_maps();
 
-    ArrayAttr iterator_types() {
-      MLIRContext *ctx = getContext();
-      return ArrayAttr::get(
-        StringAttr::get(getReductionIteratorTypeName(), ctx), ctx);
+    llvm::Optional<SmallVector<StringRef, 8>> referenceIterators() {
+      return SmallVector<StringRef, 8>{getReductionIteratorTypeName()};
+    }
+
+    llvm::Optional<SmallVector<AffineMap, 8>> referenceIndexingMaps() {
+      llvm_unreachable("NYI referenceIndexingMaps for DotOp");
     }
   }];
+
+  let hasFolder = 1;
 }
 
 def MatvecOp : LinalgStructured_Op<"matvec", [NInputs<2>, NOutputs<1>]> {
@@ -274,16 +361,22 @@ def MatvecOp : LinalgStructured_Op<"matvec", [NInputs<2>, NOutputs<1>]> {
                        AnyStridedMemRefOfRank<1>,
                        AnyStridedMemRefOfRank<1>);
   let extraClassDeclaration = libraryCallName # [{
+    // Defined in C++ for now.
+    // TODO(ntv): auto-generate.
     ArrayAttr indexing_maps();
 
-    ArrayAttr iterator_types() {
-      MLIRContext *ctx = getContext();
-      Attribute iters[2]{
-        StringAttr::get(getParallelIteratorTypeName(), ctx),
-        StringAttr::get(getReductionIteratorTypeName(), ctx)};
-      return ArrayAttr::get(iters, ctx);
+    llvm::Optional<SmallVector<StringRef, 8>> referenceIterators() {
+      return SmallVector<StringRef, 8>{
+        getParallelIteratorTypeName(),
+        getReductionIteratorTypeName()};
+    }
+
+    llvm::Optional<SmallVector<AffineMap, 8>> referenceIndexingMaps() {
+      llvm_unreachable("NYI referenceIndexingMaps for MatvecOp");
     }
   }];
+
+  let hasFolder = 1;
 }
 
 def MatmulOp : LinalgStructured_Op<"matmul", [NInputs<2>, NOutputs<1>]> {
@@ -291,17 +384,23 @@ def MatmulOp : LinalgStructured_Op<"matmul", [NInputs<2>, NOutputs<1>]> {
                        AnyStridedMemRefOfRank<2>,
                        AnyStridedMemRefOfRank<2>);
   let extraClassDeclaration = libraryCallName # [{
+    // Defined in C++ for now.
+    // TODO(ntv): auto-generate.
     ArrayAttr indexing_maps();
 
-    ArrayAttr iterator_types() {
-      MLIRContext *ctx = getContext();
-      Attribute iters[3]{
-        StringAttr::get(getParallelIteratorTypeName(), ctx),
-        StringAttr::get(getParallelIteratorTypeName(), ctx),
-        StringAttr::get(getReductionIteratorTypeName(), ctx)};
-      return ArrayAttr::get(iters, ctx);
+    llvm::Optional<SmallVector<StringRef, 8>> referenceIterators() {
+      return SmallVector<StringRef, 8>{
+        getParallelIteratorTypeName(),
+        getParallelIteratorTypeName(),
+        getReductionIteratorTypeName()};
+    }
+
+    llvm::Optional<SmallVector<AffineMap, 8>> referenceIndexingMaps() {
+      llvm_unreachable("NYI referenceIndexingMaps for MatmulOp");
     }
   }];
+
+  let hasFolder = 1;
 }
 
 def ConvOp : LinalgStructured_Op<"conv", [NInputs<2>, NOutputs<1>]> {
@@ -335,12 +434,14 @@ def ConvOp : LinalgStructured_Op<"conv", [NInputs<2>, NOutputs<1>]> {
     unsigned getNumInputFeatureDimensions() { return 1; }
     unsigned getNumOutputFeatureDimensions() { return 1; }
 
+    // Defined in C++ for now.
+    // TODO(ntv): auto-generate.
     ArrayAttr indexing_maps();
 
-    ArrayAttr iterator_types() {
+    llvm::Optional<SmallVector<StringRef, 8>> referenceIterators() {
       // Outer parallel loops are always the number of output dimensions; i.e.
-      // [ b, xs, q] in the TF notation above.
-      unsigned nPar = getOutputViewType(0).getRank();
+      // [b, xs, q] in the TF notation above.
+      unsigned nPar = getOutputShapedType(0).getRank();
       unsigned nRed = getNumInputFeatureDimensions();
       // Window loops are a special kind of reduction that is never tiled or
       // parallelized across; i.e. [zs] in the TF notation above whose number
@@ -348,13 +449,11 @@ def ConvOp : LinalgStructured_Op<"conv", [NInputs<2>, NOutputs<1>]> {
       // This may evolve in the future.
       unsigned nWin =
         nPar - getNumBatchDimensions() - getNumInputFeatureDimensions();
-      MLIRContext *ctx = getContext();
-      SmallVector<Attribute, 8> iters(
-        nPar, StringAttr::get(getParallelIteratorTypeName(), ctx));
+      SmallVector<StringRef, 8> iters(nPar, getParallelIteratorTypeName());
       iters.reserve(nPar + nRed + nWin);
-      iters.append(nRed, StringAttr::get(getReductionIteratorTypeName(), ctx));
-      iters.append(nWin, StringAttr::get(getWindowIteratorTypeName(), ctx));
-      return ArrayAttr::get(iters, ctx);
+      iters.append(nRed, getReductionIteratorTypeName());
+      iters.append(nWin, getWindowIteratorTypeName());
+      return iters;
     }
 
     int64_t getStride(unsigned i) {
@@ -370,12 +469,31 @@ def ConvOp : LinalgStructured_Op<"conv", [NInputs<2>, NOutputs<1>]> {
       return dilations()->getValue()[i]
         .cast<IntegerAttr>().getValue().getSExtValue();
     }
+
+    llvm::Optional<SmallVector<AffineMap, 8>> referenceIndexingMaps() {
+      llvm_unreachable("NYI referenceIndexingMaps for MatmulOp");
+    }
   }];
+
   let verifier = [{ return ::verify(*this); }];
+
+  let hasFolder = 1;
 }
 
+def LinalgOperand: Type<
+  Or<[AnyRankedTensor.predicate, AnyStridedMemRef.predicate]>>;
+
+class LinalgOperandOfRank<int rank>: Type<
+  And<[
+    LinalgOperand.predicate,
+    CPred<"$_self.cast<ShapedType>().getRank() == " # rank>]
+  >>;
+
+////////////////////////////////////////////////////////////////////////////////
+// Generic Linalg ops.
+////////////////////////////////////////////////////////////////////////////////
 class GenericOpBase<string mnemonic> : LinalgStructuredBase_Op<mnemonic, []> {
-  let arguments = (ins Variadic<AnyStridedMemRef>:$views,
+  let arguments = (ins Variadic<LinalgOperand>:$views,
                    I64Attr:$args_in,
                    I64Attr:$args_out,
                    AffineMapArrayAttr:$indexing_maps,
@@ -383,6 +501,7 @@ class GenericOpBase<string mnemonic> : LinalgStructuredBase_Op<mnemonic, []> {
                    OptionalAttr<StrAttr>:$doc,
                    OptionalAttr<FlatSymbolRefAttr>:$fun,
                    OptionalAttr<StrAttr>:$library_call);
+  let results = (outs Variadic<AnyRankedTensor>:$output_tensors);
   let regions = (region AnyRegion:$region);
   let extraClassDeclaration = [{
     SmallVector<StringRef, 8> linalgTraitAttrNames() {
@@ -392,34 +511,36 @@ class GenericOpBase<string mnemonic> : LinalgStructuredBase_Op<mnemonic, []> {
         getIteratorTypesAttrName()
       };
     }
+
     unsigned getNumInputs() { return args_in().getSExtValue(); }
+
     unsigned getNumOutputs() { return args_out().getSExtValue(); }
+
     FuncOp getFunction() {
       auto moduleOp = getParentOfType<ModuleOp>();
       return fun().hasValue() ?
         moduleOp.lookupSymbol<FuncOp>(fun().getValue()) : FuncOp();
     }
+
     StringRef getLibraryCallName() {
       return library_call().hasValue() ? library_call().getValue() : "";
     }
-    AffineMap getIndexingMap(unsigned i) {
-      assert(i < getNumInputsAndOutputs());
-      return indexing_maps().getValue()[i].cast<AffineMapAttr>().getValue();
-    }
-    AffineMap getInputIndexingMap(unsigned i) {
-      assert(i < getNumInputs());
-      return indexing_maps().getValue()[i].cast<AffineMapAttr>().getValue();
-    }
-    AffineMap getOutputIndexingMap(unsigned i) {
-      assert(i < getNumOutputs());
-      return indexing_maps().getValue()[i + getNumInputs()]
-          .cast<AffineMapAttr>().getValue();
-    }
+
+    llvm::Optional<SmallVector<StringRef, 8>> referenceIterators() {
+      llvm_unreachable(
+        "No such thing as reference iterator types for a generic op.");
+     }
+
+    llvm::Optional<SmallVector<AffineMap, 8>> referenceIndexingMaps() {
+      llvm_unreachable(
+        "No such thing as reference indexing maps for a generic op.");
+     }
   }];
   let printer = [{ return ::print(p, *this); }];
   let parser = [{ return ::parseGenericOp(parser, result); }];
 }
 
+/// Index-free GenericOp.
 def GenericOp : GenericOpBase<"generic"> {
   let description = [{
     Generic Linalg op form where the key properties of the computation are
@@ -511,10 +632,41 @@ def GenericOp : GenericOpBase<"generic"> {
       }
     }
     ```
+
+    To allow progressive lowering from the value world (a.k.a tensor values) to
+    the buffer world (a.k.a memref values), a `linalg.generic` op accepts
+    mixing input and output ranked tensor values with input and output memrefs.
+
+    ```mlir
+      %C = linalg.generic #trait_attribute %A, %B {other-attributes} :
+        tensor<?x?xf32>,
+        memref<?x?xf32, stride_specification>
+        -> (tensor<?x?xf32>)
+    ```
+
+    In this case, the number of outputs (args_out) must match the sum of (1) the
+    number of output buffer operands and (2) the number of tensor return values.
+    The semantics is that the `linalg.indexed_generic` op produces (i.e.
+    allocates and fills) its tensor return values.
+
+    Tensor values must be legalized by a buffer allocation pass before most
+    transformations can be applied. Such legalization moves tensor return values
+    into output buffer operands and updates the region arguments accordingly.
+
+    Transformations that create control-flow around linalg.indexed_generic
+    operations are not expected to work with tensors because SSA values do not
+    escape naturally. Still, transformations and rewrites that take advantage of
+    tensor SSA values are expected to be useful and will be added in the near
+    future.
   }];
+
   let verifier = [{ return ::verify(*this); }];
+
+  let hasFolder = 1;
 }
 
+/// GenericOp with Indexing (i.e. multi-for style in which the region is passed
+/// the enclosing loop induction variables)
 def IndexedGenericOp : GenericOpBase<"indexed_generic"> {
   let description = [{
     Indexed Generic Linalg op form where the key properties of the computation
@@ -555,9 +707,11 @@ def IndexedGenericOp : GenericOpBase<"indexed_generic"> {
     Example:
     Defining a #matmul_trait attribute in MLIR can be done as follows:
       ```mlir
-        func @fma(%i: index, %j: index, %k: index, %a: f32, %b: f32, %c: f32)
+        func @fma(%offset_m: index, %offset_n: index, %offset_k: index,
+                  %a: f32, %b: f32, %c: f32)
           -> f32
         {
+          "some_optional_condition"(%offset_m, %offset_n, %offset_k)
           %d = mulf %a, %b: f32
           %e = addf %c, %d: f32
           return %e: f32
@@ -587,7 +741,7 @@ def IndexedGenericOp : GenericOpBase<"indexed_generic"> {
 
     This may lower to either:
       ```mlir
-        call @linalg_matmul(%A, %B, %C) :
+        call @linalg_matmul(%offset_m, %offset_n, %offset_k, %A, %B, %C) :
           (memref<?x?xf32, stride_specification>,
            memref<?x?xf32, stride_specification>,
            memref<?x?xf32, stride_specification>)
@@ -609,8 +763,38 @@ def IndexedGenericOp : GenericOpBase<"indexed_generic"> {
       }
     }
     ```
+
+    To allow progressive lowering from the value world (a.k.a tensor values) to
+    the buffer world (a.k.a memref values), a `linalg.indexed_generic` op
+    accepts mixing input and output ranked tensor values with input and output
+    memrefs.
+
+    ```mlir
+      %C = linalg.indexed_generic #trait_attribute %A, %B {other-attributes}
+      : tensor<?x?xf32>,
+        memref<?x?xf32, stride_specification>
+        -> (tensor<?x?xf32>)
+    ```
+
+    In this case, the number of outputs (args_out) must match the sum of (1) the
+    number of output buffer operands and (2) the number of tensor return values.
+    The semantics is that the `linalg.indexed_generic` op produces (i.e.
+    allocates and fills) its return values.
+
+    Tensor values must be legalized by a buffer allocation pass before most
+    transformations can be applied. Such legalization moves tensor return values
+    into output buffer operands and updates the region argument accordingly.
+
+    Transformations that create control-flow around linalg.indexed_generic
+    operations are not expected to work with tensors because SSA values do not
+    escape naturally. Still, transformations and rewrites that take advantage of
+    tensor SSA values are expected to be useful and will be added in the near
+    future.
   }];
+
   let verifier = [{ return ::verify(*this); }];
+
+  let hasFolder = 1;
 }
 
 #endif // LINALG_STRUCTURED_OPS

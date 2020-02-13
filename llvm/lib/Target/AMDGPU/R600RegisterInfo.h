@@ -24,6 +24,10 @@ struct R600RegisterInfo final : public R600GenRegisterInfo {
 
   R600RegisterInfo();
 
+  /// \returns the sub reg enum value for the given \p Channel
+  /// (e.g. getSubRegFromChannel(0) -> R600::sub0)
+  static unsigned getSubRegFromChannel(unsigned Channel);
+
   BitVector getReservedRegs(const MachineFunction &MF) const override;
   const MCPhysReg *getCalleeSavedRegs(const MachineFunction *MF) const override;
   Register getFrameRegister(const MachineFunction &MF) const override;
@@ -39,6 +43,10 @@ struct R600RegisterInfo final : public R600GenRegisterInfo {
 
   const RegClassWeight &
     getRegClassWeight(const TargetRegisterClass *RC) const override;
+
+  bool trackLivenessAfterRegAlloc(const MachineFunction &MF) const override {
+    return false;
+  }
 
   // \returns true if \p Reg can be defined in one ALU clause and used in
   // another.

@@ -121,6 +121,8 @@ def SDT_X86WIN_ALLOCA : SDTypeProfile<0, 1, [SDTCisVT<0, iPTR>]>;
 
 def SDT_X86SEG_ALLOCA : SDTypeProfile<1, 1, [SDTCisVT<0, iPTR>, SDTCisVT<1, iPTR>]>;
 
+def SDT_X86PROBED_ALLOCA : SDTypeProfile<1, 1, [SDTCisVT<0, iPTR>, SDTCisVT<1, iPTR>]>;
+
 def SDT_X86EHRET : SDTypeProfile<0, 1, [SDTCisInt<0>]>;
 
 def SDT_X86TCRET : SDTypeProfile<0, 2, [SDTCisPtrTy<0>, SDTCisVT<1, i32>]>;
@@ -151,8 +153,6 @@ def X86brcond  : SDNode<"X86ISD::BRCOND",   SDTX86BrCond,
                         [SDNPHasChain]>;
 def X86setcc   : SDNode<"X86ISD::SETCC",    SDTX86SetCC>;
 def X86setcc_c : SDNode<"X86ISD::SETCC_CARRY", SDTX86SetCC_C>;
-
-def X86sahf    : SDNode<"X86ISD::SAHF",     SDTX86sahf>;
 
 def X86rdrand  : SDNode<"X86ISD::RDRAND",   SDTX86rdrand,
                         [SDNPHasChain, SDNPSideEffect]>;
@@ -294,6 +294,9 @@ def X86WinAlloca : SDNode<"X86ISD::WIN_ALLOCA", SDT_X86WIN_ALLOCA,
 def X86SegAlloca : SDNode<"X86ISD::SEG_ALLOCA", SDT_X86SEG_ALLOCA,
                           [SDNPHasChain]>;
 
+def X86ProbedAlloca : SDNode<"X86ISD::PROBED_ALLOCA", SDT_X86PROBED_ALLOCA,
+                          [SDNPHasChain]>;
+
 def X86TLSCall : SDNode<"X86ISD::TLSCALL", SDT_X86TLSCALL,
                         [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue]>;
 
@@ -378,8 +381,8 @@ class X86VMemOperand<RegisterClass RC, string printMethod,
 
 def anymem : X86MemOperand<"printanymem">;
 def X86any_fcmp : PatFrags<(ops node:$lhs, node:$rhs),
-                          [(X86cmp node:$lhs, node:$rhs),
-                           (X86strict_fcmp node:$lhs, node:$rhs)]>;
+                          [(X86strict_fcmp node:$lhs, node:$rhs),
+                           (X86cmp node:$lhs, node:$rhs)]>;
 
 // FIXME: Right now we allow any size during parsing, but we might want to
 // restrict to only unsized memory.
@@ -454,18 +457,6 @@ def i64mem_TC : Operand<i64> {
   let OperandType = "OPERAND_MEMORY";
 }
 
-let OperandType = "OPERAND_PCREL",
-    ParserMatchClass = X86AbsMemAsmOperand,
-    PrintMethod = "printPCRelImm" in {
-def i32imm_pcrel : Operand<i32>;
-def i16imm_pcrel : Operand<i16>;
-
-// Branch targets have OtherVT type and print as pc-relative values.
-def brtarget : Operand<OtherVT>;
-def brtarget8 : Operand<OtherVT>;
-
-}
-
 // Special parser to detect 16-bit mode to select 16-bit displacement.
 def X86AbsMem16AsmOperand : AsmOperandClass {
   let Name = "AbsMem16";
@@ -473,14 +464,26 @@ def X86AbsMem16AsmOperand : AsmOperandClass {
   let SuperClasses = [X86AbsMemAsmOperand];
 }
 
-// Branch targets have OtherVT type and print as pc-relative values.
-let OperandType = "OPERAND_PCREL",
-    PrintMethod = "printPCRelImm" in {
-let ParserMatchClass = X86AbsMem16AsmOperand in
-  def brtarget16 : Operand<OtherVT>;
-let ParserMatchClass = X86AbsMemAsmOperand in
-  def brtarget32 : Operand<OtherVT>;
+// Branch targets print as pc-relative values.
+class BranchTargetOperand<ValueType ty> : Operand<ty> {
+  let OperandType = "OPERAND_PCREL";
+  let PrintMethod = "printPCRelImm";
+  let ParserMatchClass = X86AbsMemAsmOperand;
 }
+
+def i32imm_brtarget : BranchTargetOperand<i32>;
+def i16imm_brtarget : BranchTargetOperand<i16>;
+
+// 64-bits but only 32 bits are significant, and those bits are treated as being
+// pc relative.
+def i64i32imm_brtarget : BranchTargetOperand<i64>;
+
+def brtarget : BranchTargetOperand<OtherVT>;
+def brtarget8 : BranchTargetOperand<OtherVT>;
+def brtarget16 : BranchTargetOperand<OtherVT> {
+  let ParserMatchClass = X86AbsMem16AsmOperand;
+}
+def brtarget32 : BranchTargetOperand<OtherVT>;
 
 let RenderMethod = "addSrcIdxOperands" in {
   def X86SrcIdx8Operand : AsmOperandClass {
@@ -754,14 +757,6 @@ def i64u8imm : Operand<i64> {
   let PrintMethod = "printU8Imm";
   let ParserMatchClass = ImmUnsignedi8AsmOperand;
   let OperandType = "OPERAND_IMMEDIATE";
-}
-
-// 64-bits but only 32 bits are significant, and those bits are treated as being
-// pc relative.
-def i64i32imm_pcrel : Operand<i64> {
-  let PrintMethod = "printPCRelImm";
-  let ParserMatchClass = X86AbsMemAsmOperand;
-  let OperandType = "OPERAND_PCREL";
 }
 
 def lea64_32mem : Operand<i32> {
@@ -1795,9 +1790,8 @@ def MOV8rm_NOREX : I<0x8A, MRMSrcMem,
 
 // Condition code ops, incl. set if equal/not equal/...
 let SchedRW = [WriteLAHFSAHF] in {
-let Defs = [EFLAGS], Uses = [AH] in
-def SAHF     : I<0x9E, RawFrm, (outs),  (ins), "sahf",
-                 [(set EFLAGS, (X86sahf AH))]>,
+let Defs = [EFLAGS], Uses = [AH], hasSideEffects = 0 in
+def SAHF     : I<0x9E, RawFrm, (outs),  (ins), "sahf", []>,  // flags = AH
                  Requires<[HasLAHFSAHF]>;
 let Defs = [AH], Uses = [EFLAGS], hasSideEffects = 0 in
 def LAHF     : I<0x9F, RawFrm, (outs),  (ins), "lahf", []>,  // AH = flags
@@ -2851,7 +2845,7 @@ let SchedRW = [WriteStore], Defs = [EFLAGS] in {
 //===----------------------------------------------------------------------===//
 // CLZERO Instruction
 //
-let SchedRW = [WriteSystem] in {
+let SchedRW = [WriteLoad] in {
   let Uses = [EAX] in
   def CLZERO32r : I<0x01, MRM_FC, (outs), (ins), "clzero", []>,
                   TB, Requires<[HasCLZERO, Not64BitMode]>;
